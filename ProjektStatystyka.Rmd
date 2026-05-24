@@ -1,0 +1,488 @@
+---
+title: "Zaufanie społeczne i gotowość do kooperacji — analiza danych World Values Survey"
+subtitle: "Projekt zaliczeniowy z przedmiotu Metody Probabilistyczne"
+author:
+  - "Imię Nazwisko 1 (nr indeksu: XXXXXX)"
+  - "Imię Nazwisko 2 (nr indeksu: XXXXXX)"
+date: "`r format(Sys.Date(), '%d.%m.%Y')`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    number_sections: true
+    theme: cosmo
+    highlight: tango
+    code_folding: show
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 8,
+  fig.height = 5,
+  fig.align = "center"
+)
+
+# Wczytanie wymaganych pakietów
+library(data.table)   # przetwarzanie danych (wymagane przez prowadzącego)
+library(ggplot2)      # wizualizacja (wymagane przez prowadzącego)
+library(moments)      # skośność i kurtoza
+library(ggcorrplot)   # mapa cieplna korelacji
+library(broom)        # czytelne wyniki modeli
+library(car)          # test Levene'a
+library(knitr)        # formatowanie tabel
+```
+
+# CZĘŚĆ I — Metryczka i opis danych
+
+## 1.1. Skład grupy i podział prac
+
+```{r podzial-prac, echo=FALSE}
+podzial <- data.table(
+  `Członek grupy` = c("Imię Nazwisko 1", "Imię Nazwisko 2"),
+  `Nr indeksu`    = c("XXXXXX", "XXXXXX"),
+  `Zakres odpowiedzialności` = c(
+    "Przygotowanie danych, statystyki opisowe (Część II), analiza korelacji (Część V.1), montaż raportu",
+    "Analiza prawdopodobieństw (Część III), testowanie hipotez (Część IV), regresja liniowa (Część V.2), wnioski końcowe"
+  )
+)
+kable(podzial, caption = "Tabela 1. Podział prac w grupie")
+```
+
+## 1.2. Cel badania
+
+**Problem badawczy:** *Jakie czynniki demograficzne i kulturowe determinują skłonność jednostek do
+kooperatywnego zachowania w społeczeństwie?*
+
+Badanie łączy perspektywę socjologiczną (zaufanie społeczne, kapitał społeczny) z aparatem teorii gier
+(klasyczny dylemat więźnia, problem „pasażera na gapę"). Pytania ankietowe World Values Survey o
+zaufanie do innych ludzi oraz o usprawiedliwianie zachowań typu free-rider (jazda bez biletu, unikanie
+podatków) traktujemy jako **behawioralne wskaźniki** gotowości do kooperacji w realnych dylematach
+społecznych.
+
+## 1.3. Źródło danych
+
+- **Nazwa:** World Values Survey, Wave 7 (2017–2022)
+- **Wersja:** v6.0
+- **Źródło:** https://www.worldvaluessurvey.org/WVSDocumentationWV7.jsp
+- **Format pliku:** CSV (`WVS_Cross-National_Wave_7_csv_v6_0.csv`, ~182 MB)
+- **Liczba obserwacji w surowym pliku:** 97 220 respondentów z 66 krajów
+- **Liczba zmiennych w surowym pliku:** 613
+
+## 1.4. Wczytanie i wstępne czyszczenie danych
+
+```{r wczytaj-dane}
+# Wczytanie pełnego zbioru z pliku CSV
+sciezka <- "data/WVS_Cross-National_Wave_7_csv_v6_0.csv"
+raw <- fread(sciezka)
+
+cat("Wymiary surowego zbioru:", dim(raw)[1], "wierszy ×", dim(raw)[2], "kolumn\n")
+```
+
+```{r wybierz-zmienne}
+# Wybór 12 zmiennych istotnych dla naszego badania
+dt <- raw[, .(
+  trust       = Q57,      # zaufanie do większości ludzi (1 = tak, 2 = ostrożność)
+  cheat_taxes = Q180,     # czy uchylanie się od podatków jest usprawiedliwione (1–10)
+  cheat_fare  = Q177,     # czy jazda bez biletu jest usprawiedliwiona (1–10)
+  happiness   = Q46,      # poziom szczęścia (1–4)
+  life_sat    = Q49,      # zadowolenie z życia (1–10)
+  income      = Q288,     # decyl dochodu (1–10)
+  age         = Q262,     # wiek
+  sex         = Q260,     # płeć (1 = M, 2 = K)
+  education   = Q275,     # poziom wykształcenia (0–8)
+  country     = B_COUNTRY,# kod kraju
+  religion    = Q6,       # znaczenie religii (1–4)
+  politics    = Q240      # poglądy polityczne lewo–prawo (1–10)
+)]
+
+# W WVS wartości ujemne (-1, -2, -4, -5) oznaczają "brak odpowiedzi" / "nie wiem"
+# Zamieniamy je na NA i usuwamy wiersze z brakami
+dt[dt < 0] <- NA
+dt <- na.omit(dt)
+
+# Rekodowanie zmiennych
+dt[, trust := ifelse(trust == 1, 1L, 0L)]      # 1 = ufa, 0 = nie ufa
+dt[, sex   := factor(sex, levels = c(1, 2), labels = c("Mężczyzna", "Kobieta"))]
+dt[, education := factor(education,
+                         levels = 0:8,
+                         labels = c("Brak", "Podstawowe niepełne", "Podstawowe",
+                                    "Gimnazjalne", "Średnie zawodowe", "Średnie",
+                                    "Pomaturalne", "Licencjackie", "Magisterskie+"))]
+
+cat("Wymiary po czyszczeniu:", dim(dt)[1], "wierszy ×", dim(dt)[2], "kolumn\n")
+```
+
+## 1.5. Opis zmiennych
+
+```{r opis-zmiennych, echo=FALSE}
+opis <- data.table(
+  Zmienna = c("trust", "cheat_taxes", "cheat_fare", "happiness", "life_sat",
+              "income", "age", "sex", "education", "country", "religion", "politics"),
+  Kod_WVS = c("Q57", "Q180", "Q177", "Q46", "Q49", "Q288", "Q262", "Q260",
+              "Q275", "B_COUNTRY", "Q6", "Q240"),
+  Opis = c(
+    "Zaufanie do większości ludzi (0 = nie ufa, 1 = ufa)",
+    "Usprawiedliwianie uchylania się od podatków (1–10)",
+    "Usprawiedliwianie jazdy bez biletu (1–10)",
+    "Poziom szczęścia (1 = bardzo szczęśliwy, 4 = wcale)",
+    "Zadowolenie z życia (1 = całkowicie niezadowolony, 10 = całkowicie zadowolony)",
+    "Decyl dochodu gospodarstwa domowego (1 = najniższy, 10 = najwyższy)",
+    "Wiek respondenta",
+    "Płeć",
+    "Najwyższy ukończony poziom wykształcenia",
+    "Kraj zamieszkania (kod numeryczny)",
+    "Znaczenie religii w życiu (1 = bardzo ważna, 4 = nieważna)",
+    "Poglądy polityczne (1 = lewica, 10 = prawica)"
+  ),
+  Typ = c("binarna", "ilościowa", "ilościowa", "porządkowa", "ilościowa",
+          "porządkowa", "ilościowa", "jakościowa", "jakościowa",
+          "jakościowa", "porządkowa", "ilościowa")
+)
+kable(opis, caption = "Tabela 2. Wybrane zmienne — opis i typ")
+```
+
+---
+
+# CZĘŚĆ II — Parametry i rozkłady (analiza jednowymiarowa)
+
+**Cel:** Opisać kluczową zmienną ilościową za pomocą statystyk położenia i kształtu oraz dopasować do
+niej rozkład teoretyczny.
+
+**Wybrana zmienna kluczowa:** `life_sat` — zadowolenie z życia (skala 1–10).
+
+## 2.1. Statystyki opisowe
+
+```{r statystyki-opisowe}
+stats <- dt[, .(
+  Średnia          = mean(life_sat),
+  Mediana          = median(life_sat),
+  `Odch. std.`     = sd(life_sat),
+  `Wsp. zmienności` = sd(life_sat) / mean(life_sat),
+  Skośność         = skewness(life_sat),
+  Kurtoza          = kurtosis(life_sat),
+  Min              = min(life_sat),
+  Max              = max(life_sat),
+  N                = .N
+)]
+kable(stats, digits = 3, caption = "Tabela 3. Statystyki opisowe zmiennej `life_sat`")
+```
+
+**Interpretacja:**
+
+- TODO: porównaj średnią z medianą — jeśli są bliskie, rozkład jest w przybliżeniu symetryczny
+- TODO: skomentuj skośność (>0 → ogon w prawo; <0 → ogon w lewo)
+- TODO: skomentuj kurtozę (>3 → rozkład bardziej spiczasty niż normalny; <3 → bardziej spłaszczony)
+
+## 2.2. Histogram z dopasowaną krzywą rozkładu
+
+```{r histogram-rozklad}
+ggplot(dt, aes(x = life_sat)) +
+  geom_histogram(aes(y = after_stat(density)),
+                 bins = 10, fill = "steelblue", color = "white", alpha = 0.8) +
+  stat_function(fun = dnorm,
+                args = list(mean = mean(dt$life_sat), sd = sd(dt$life_sat)),
+                color = "red", linewidth = 1.2) +
+  labs(
+    title = "Rozkład zadowolenia z życia z nałożoną krzywą normalną",
+    subtitle = paste("N =", nrow(dt)),
+    x = "Zadowolenie z życia (1–10)",
+    y = "Gęstość"
+  ) +
+  theme_minimal()
+```
+
+## 2.3. Wniosek (Część II)
+
+TODO: Uzasadnij wybór modelu rozkładu, odnosząc się do:
+
+- różnicy między średnią a medianą,
+- wartości skośności,
+- wartości kurtozy,
+- wizualnej zgodności histogramu z dopasowaną krzywą.
+
+---
+
+# CZĘŚĆ III — Prawdopodobieństwo i zmienne dwuwymiarowe
+
+**Cel:** Zdefiniować dwa zdarzenia, obliczyć prawdopodobieństwa warunkowe i sprawdzić niezależność.
+
+## 3.1. Definicja zdarzeń
+
+- **Zdarzenie A:** respondent ufa większości ludzi (`trust == 1`).
+  *Interpretacja teoretyczno-grafowa:* wskaźnik gotowości do współpracy w klasycznym dylemacie więźnia.
+
+- **Zdarzenie B:** respondent uważa, że jazda bez biletu **nigdy nie jest usprawiedliwiona**
+  (`cheat_fare == 1`).
+  *Interpretacja teoretyczno-grafowa:* odrzucenie strategii pasażera na gapę (free-rider problem).
+
+## 3.2. Obliczenia prawdopodobieństw
+
+```{r prawdopodobienstwa}
+PA  <- dt[, mean(trust == 1)]
+PB  <- dt[, mean(cheat_fare == 1)]
+PAB <- dt[, mean(trust == 1 & cheat_fare == 1)]
+PA_given_B <- PAB / PB
+PB_given_A <- PAB / PA
+
+prob_tab <- data.table(
+  Wielkość = c("P(A) — ufa ludziom",
+               "P(B) — nie usprawiedliwia jazdy bez biletu",
+               "P(A ∩ B) — oba zdarzenia jednocześnie",
+               "P(A | B) — ufa, gdy potępia gapowiczów",
+               "P(B | A) — potępia gapowiczów, gdy ufa"),
+  Wartość = c(PA, PB, PAB, PA_given_B, PB_given_A)
+)
+kable(prob_tab, digits = 4, caption = "Tabela 4. Prawdopodobieństwa zdarzeń A i B")
+```
+
+## 3.3. Sprawdzenie niezależności
+
+```{r niezaleznosc}
+# Test analityczny: P(A ∩ B) vs P(A)·P(B)
+iloczyn <- PA * PB
+cat("P(A ∩ B) =", round(PAB, 4), "\n")
+cat("P(A)·P(B) =", round(iloczyn, 4), "\n")
+cat("Różnica:  ", round(PAB - iloczyn, 4), "\n\n")
+
+# Formalny test chi-kwadrat niezależności
+tab <- table(dt$trust, dt$cheat_fare == 1)
+dimnames(tab) <- list(Trust = c("Nie ufa", "Ufa"),
+                      `Potępia gapowiczów` = c("Nie", "Tak"))
+print(tab)
+chisq.test(tab)
+```
+
+## 3.4. Wniosek (Część III)
+
+TODO: Jeśli `P(A|B) > P(A)` → wśród osób potępiających jazdę bez biletu zaufanie jest częstsze niż w
+populacji ogólnej → zdarzenia są dodatnio skorelowane → potwierdza istnienie „typu osobowości
+kooperatywnej". Połącz z teorią gier: jednostka, która unika zachowania pasażera na gapę, jest też
+bardziej skłonna do wyboru kooperacji w dylemacie więźnia.
+
+---
+
+# CZĘŚĆ IV — Wnioskowanie statystyczne (estymacja i hipotezy)
+
+## 4.1. 95% Przedział ufności dla średniej zadowolenia z życia
+
+```{r przedzial-ufnosci}
+ci_test <- t.test(dt$life_sat, conf.level = 0.95)
+cat("Średnia w próbie: ", round(mean(dt$life_sat), 3), "\n")
+cat("95% przedział ufności: [",
+    round(ci_test$conf.int[1], 3), ",",
+    round(ci_test$conf.int[2], 3), "]\n")
+```
+
+**Interpretacja:** Z 95% pewnością prawdziwa średnia wartość zadowolenia z życia w populacji znajduje
+się w powyższym przedziale.
+
+## 4.2. Hipoteza H1 — różnica zadowolenia z życia między płciami
+
+- **H₀:** średnia `life_sat` jest taka sama u kobiet i mężczyzn.
+- **H₁:** średnie się różnią.
+- **Test:** t-Studenta dla dwóch prób niezależnych.
+- **Test nieparametryczny:** Wilcoxon (Mann-Whitney U).
+
+```{r h1-plec-life-sat}
+# Sprawdzenie założeń
+# 1. Normalność — przy N > 5000 Shapiro-Wilka nie da się uruchomić;
+#    polegamy na CTG (centralne twierdzenie graniczne).
+# 2. Jednorodność wariancji — test Levene'a
+leveneTest(life_sat ~ sex, data = dt)
+
+# Test parametryczny
+t_h1 <- t.test(life_sat ~ sex, data = dt)
+print(t_h1)
+
+# Test nieparametryczny (kontrola)
+wilcox.test(life_sat ~ sex, data = dt)
+```
+
+**Wynik H1 — TODO:** *„Test t-Studenta wykazał istotną/nieistotną różnicę w średnim zadowoleniu z
+życia między mężczyznami a kobietami, t(df)=…, p=…"*
+
+## 4.3. Hipoteza H2 — zaufanie a poziom wykształcenia (ANOVA)
+
+- **H₀:** odsetek osób ufających ludziom (`trust`) jest taki sam we wszystkich grupach wykształcenia.
+- **Test:** ANOVA.
+- **Test nieparametryczny:** Kruskal-Wallis.
+
+```{r h2-zaufanie-edukacja}
+anova_h2 <- aov(trust ~ education, data = dt)
+summary(anova_h2)
+
+kruskal.test(trust ~ education, data = dt)
+```
+
+**Wynik H2 — TODO**
+
+## 4.4. Hipoteza H3 — tolerancja dla oszukiwania na podatkach a kraj
+
+- **H₀:** średnia `cheat_taxes` jest taka sama we wszystkich krajach (wybranych do porównania).
+- **Test:** ANOVA + Kruskal-Wallis.
+
+```{r h3-cheat-kraj}
+# Dla czytelności wybieramy 5 krajów (kody do uzupełnienia)
+# Najczęstsze kody krajów w WVS Wave 7 sprawdzimy po wczytaniu danych
+top_krajów <- dt[, .N, by = country][order(-N)][1:5, country]
+dt_sub <- dt[country %in% top_krajów]
+dt_sub[, country := factor(country)]
+
+aov_h3 <- aov(cheat_taxes ~ country, data = dt_sub)
+summary(aov_h3)
+
+kruskal.test(cheat_taxes ~ country, data = dt_sub)
+```
+
+**Wynik H3 — TODO**
+
+## 4.5. Hipoteza H4 — płeć vs zaufanie (Chi-kwadrat)
+
+- **H₀:** płeć i zaufanie są niezależne.
+- **Test:** Chi-kwadrat niezależności.
+
+```{r h4-chi-plec-trust}
+tab_h4 <- table(dt$sex, dt$trust)
+dimnames(tab_h4)[[2]] <- c("Nie ufa", "Ufa")
+print(tab_h4)
+chisq.test(tab_h4)
+```
+
+**Wynik H4 — TODO**
+
+## 4.6. Hipoteza H5 — religia vs tolerancja dla oszustwa (Chi-kwadrat)
+
+- **H₀:** znaczenie religii i tolerancja dla uchylania się od podatków są niezależne.
+- **Test:** Chi-kwadrat niezależności.
+
+```{r h5-chi-religia-cheat}
+# Rekodowanie cheat_taxes na kategorie
+dt[, cheat_kat := cut(cheat_taxes,
+                      breaks = c(0, 1, 4, 10),
+                      labels = c("Nigdy", "Czasem", "Często"))]
+dt[, religia_kat := factor(religion,
+                           levels = 1:4,
+                           labels = c("Bardzo ważna", "Ważna",
+                                      "Mało ważna", "Nieważna"))]
+
+tab_h5 <- table(dt$religia_kat, dt$cheat_kat)
+print(tab_h5)
+chisq.test(tab_h5)
+```
+
+**Wynik H5 — TODO**
+
+## 4.7. Podsumowanie hipotez
+
+```{r podsumowanie-hipotez, echo=FALSE}
+# Tabelka wypełniana ręcznie po uruchomieniu wszystkich testów
+podsumowanie <- data.table(
+  Hipoteza = c("H1: płeć vs life_sat",
+               "H2: wykształcenie vs trust",
+               "H3: kraj vs cheat_taxes",
+               "H4: płeć vs trust",
+               "H5: religia vs cheat_taxes"),
+  Test = c("t-Studenta + Wilcoxon", "ANOVA + Kruskal-Wallis",
+           "ANOVA + Kruskal-Wallis", "Chi-kwadrat", "Chi-kwadrat"),
+  `p-value` = c("…", "…", "…", "…", "…"),
+  `Decyzja (α=0.05)` = c("…", "…", "…", "…", "…")
+)
+kable(podsumowanie, caption = "Tabela 5. Podsumowanie wyników testów hipotez")
+```
+
+---
+
+# CZĘŚĆ V — Relacje i przewidywanie (korelacja i regresja)
+
+## 5.1. Macierz korelacji
+
+```{r macierz-korelacji}
+zmienne_num <- dt[, .(life_sat, cheat_taxes, cheat_fare, age,
+                       income, religion, politics, happiness, trust)]
+cor_mat <- cor(zmienne_num, use = "complete.obs")
+
+ggcorrplot(cor_mat,
+           lab = TRUE,
+           lab_size = 3,
+           type = "lower",
+           colors = c("#6D9EC1", "white", "#E46726"),
+           title = "Macierz korelacji zmiennych ilościowych") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+```{r test-korelacji}
+# Test istotności dla najsilniejszej korelacji (przykład)
+cor.test(dt$life_sat, dt$happiness)
+cor.test(dt$life_sat, dt$income)
+```
+
+**Interpretacja:** TODO
+
+## 5.2. Regresja liniowa: zadowolenie z życia jako funkcja zmiennych demograficznych
+
+```{r model-regresji}
+model <- lm(life_sat ~ age + sex + income + education + trust +
+                       religion + politics + happiness,
+            data = dt)
+summary(model)
+```
+
+```{r tabela-modelu, echo=FALSE}
+tidy(model) |> kable(digits = 4, caption = "Tabela 6. Współczynniki modelu regresji")
+glance(model) |> kable(digits = 4, caption = "Tabela 7. Statystyki ogólne modelu")
+```
+
+## 5.3. Interpretacja modelu
+
+TODO — omów:
+
+- **R² i Adjusted R²** — jaki procent zmienności `life_sat` model wyjaśnia
+- **F-statistic i p-value modelu** — czy model jako całość jest istotny
+- **Współczynniki β** — kierunek i siła wpływu każdej zmiennej
+- **Istotność poszczególnych predyktorów** (Pr(>|t|))
+- **Praktyczne wnioski** — które czynniki najbardziej wpływają na zadowolenie z życia
+
+---
+
+# PODSUMOWANIE I WNIOSKI
+
+## Główne ustalenia
+
+TODO — zsyntetyzuj wyniki ze wszystkich części:
+
+1. **Statystyki opisowe (Część II)** — jak wygląda rozkład zadowolenia z życia w badanej populacji?
+2. **Prawdopodobieństwa (Część III)** — czy potwierdziła się hipoteza o istnieniu „typu kooperatywnego"?
+3. **Hipotezy (Część IV)** — które różnice okazały się istotne, a które nie?
+4. **Regresja (Część V)** — jakie zmienne najsilniej wyjaśniają zadowolenie z życia?
+
+## Wnioski w kontekście teorii gier i socjologii
+
+TODO — krótkie powiązanie wyników z literaturą teorii gier (dylemat więźnia, problem pasażera na gapę,
+kapitał społeczny Putnama).
+
+## Ograniczenia badania
+
+- WVS to dane deklaratywne — odpowiedzi mogą nie odzwierciedlać rzeczywistych zachowań.
+- Pytania o usprawiedliwianie oszustwa są **proxy** dla zachowań kooperatywnych, a nie ich bezpośrednim
+  pomiarem.
+- Próba ograniczona do krajów uczestniczących w Wave 7.
+- Korelacja nie implikuje przyczynowości.
+
+## Źródła
+
+- Inglehart, R. et al. (2022). *World Values Survey: Round Seven — Country-Pooled Datafile v6.0*.
+  Madrid, Spain & Vienna, Austria: JD Systems Institute & WVSA Secretariat.
+  doi:10.14281/18241.24
+- Capraro, V. (2018). Women are slightly more cooperative than men (in one-shot Prisoner's dilemma
+  games played online). *arXiv:1805.08046*.
+- Nowak, M. A. (2006). Five rules for the evolution of cooperation. *Science*, 314, 1560–1563.
+- Putnam, R. D. (2000). *Bowling Alone: The Collapse and Revival of American Community*.
+
+---
+
+*Raport wygenerowany w R Markdown — `r format(Sys.time(), '%Y-%m-%d %H:%M')`*
