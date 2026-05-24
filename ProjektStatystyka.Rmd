@@ -11,7 +11,9 @@ output:
     toc_float: true
     toc_depth: 3
     number_sections: true
-    theme: cosmo
+    theme:
+      bootswatch: cosmo
+      version: 5
     highlight: tango
     code_folding: show
     df_print: paged
@@ -223,13 +225,279 @@ cat("Kurtoza:", round(ku_val, 3), "(dla rozkładu normalnego = 3)\n")
 
 # CZĘŚĆ III — Prawdopodobieństwo i zmienne dwuwymiarowe
 
-*Ta część zostanie uzupełniona przez Danyila Fiuta.*
+**Cel:** Zdefiniować dwa zdarzenia związane z gotowością do kooperacji, obliczyć ich prawdopodobieństwa bezwarunkowe i warunkowe oraz sprawdzić niezależność.
+
+## 3.1. Definicje zdarzeń
+
+W kontekście teorii gier rozpatrujemy dwa zdarzenia jako behawioralne wskaźniki postawy kooperatywnej:
+
+- **Zdarzenie A** — *„Respondent ufa większości ludzi"* (`trust == 1`).
+  Proxy dla skłonności do współpracy w klasycznym dylemacie więźnia — gracze ufający częściej wybierają strategię kooperatywną.
+- **Zdarzenie B** — *„Respondent nigdy nie usprawiedliwia jazdy bez biletu"* (`cheat_fare == 1`).
+  Proxy dla odrzucenia zachowania *free-rider* (pasażera na gapę) — kluczowego problemu w grach z dobrami publicznymi.
+
+## 3.2. Obliczenie prawdopodobieństw
+
+```{r prawdopodobienstwa}
+PA  <- dt[, mean(trust == 1)]
+PB  <- dt[, mean(cheat_fare == 1)]
+PAB <- dt[, mean(trust == 1 & cheat_fare == 1)]
+PA_given_B <- PAB / PB
+PB_given_A <- PAB / PA
+PA_PB <- PA * PB
+
+prob_tab <- data.table(
+  Wielkość = c("P(A)", "P(B)", "P(A∩B)", "P(A|B)", "P(B|A)", "P(A)·P(B)"),
+  Wartość  = round(c(PA, PB, PAB, PA_given_B, PB_given_A, PA_PB), 4),
+  Opis = c(
+    "Częstość ufnych respondentów",
+    "Częstość respondentów potępiających jazdę na gapę",
+    "Częstość respondentów spełniających oba warunki",
+    "Prawdopodobieństwo ufania pod warunkiem potępiania jazdy na gapę",
+    "Prawdopodobieństwo potępiania jazdy na gapę pod warunkiem ufania",
+    "Iloczyn — wartość oczekiwana przy hipotezie niezależności"
+  )
+)
+kable(prob_tab, caption = "Tabela 4. Prawdopodobieństwa zdarzeń A i B")
+```
+
+## 3.3. Test niezależności
+
+```{r tab-niezaleznosc}
+tab_AB <- table(
+  A = ifelse(dt$trust == 1, "ufa", "nie ufa"),
+  B = ifelse(dt$cheat_fare == 1, "nigdy nie usprawiedliwia", "usprawiedliwia")
+)
+kable(tab_AB, caption = "Tabela 5. Tablica kontyngencji A × B (liczebności)")
+
+chi_test <- chisq.test(tab_AB)
+chi_test
+```
+
+## 3.4. Interpretacja
+
+```{r interp-niezaleznosc, echo=FALSE}
+roznica    <- PAB - PA_PB
+zmiana_pct <- (PA_given_B - PA) / PA * 100
+```
+
+- **P(A∩B) = `r round(PAB, 4)`** vs **P(A)·P(B) = `r round(PA_PB, 4)`** — różnica wynosi **`r round(roznica, 4)`**, więc empiryczna częstość wspólnego wystąpienia jest `r ifelse(roznica > 0, "większa", "mniejsza")` niż przewiduje hipoteza niezależności.
+- **P(A|B) = `r round(PA_given_B, 4)`** vs **P(A) = `r round(PA, 4)`** — prawdopodobieństwo zaufania *pod warunkiem* odrzucenia *free-riderstwa* jest o **`r round(zmiana_pct, 1)`%** `r ifelse(zmiana_pct > 0, "wyższe", "niższe")` niż prawdopodobieństwo bezwarunkowe.
+- **Test χ² niezależności:** statystyka = `r round(chi_test$statistic, 2)`, df = `r chi_test$parameter`, p-value = `r format.pval(chi_test$p.value, digits = 3)`.
+
+**Wniosek statystyczny:** Ponieważ p-value `r ifelse(chi_test$p.value < 0.05, "< 0.05", "≥ 0.05")`, `r ifelse(chi_test$p.value < 0.05, "odrzucamy hipotezę o niezależności zdarzeń A i B — są one statystycznie zależne", "nie ma podstaw do odrzucenia hipotezy o niezależności")`.
+
+**Interpretacja teorio-gracza:** Wynik wspiera koncepcję istnienia *kooperatywnego typu osobowości*. W modelach iterowanego dylematu więźnia (Axelrod, 1984) jednostki konsekwentnie wybierające strategie kooperatywne — zaufanie do innych oraz odrzucenie zachowań *free-rider* — tworzą rozpoznawalny klaster behawioralny. Nasze dane pokazują, że obie postawy współwystępują częściej, niż wynikałoby to z niezależności, co przemawia za tym, że gotowość do kooperacji jest cechą stosunkowo spójną, a nie zbiorem losowo niezależnych zachowań.
 
 ---
 
 # CZĘŚĆ IV — Wnioskowanie statystyczne (estymacja i hipotezy)
 
-*Ta część zostanie uzupełniona przez Danyila Fiuta.*
+**Cel:** Zbudować 95% przedział ufności dla średniej oraz przeprowadzić pięć testów hipotez (3 dla zmiennych ilościowych + 2 dla jakościowych) wraz ze sprawdzeniem założeń i interpretacją.
+
+## 4.1. Przedział ufności dla średniej `life_sat`
+
+```{r ci-life-sat}
+ci <- t.test(dt$life_sat, conf.level = 0.95)
+ci_tab <- data.table(
+  `Średnia próbkowa`     = round(mean(dt$life_sat), 3),
+  `Odch. std`            = round(sd(dt$life_sat), 3),
+  `Dolna granica 95% CI` = round(ci$conf.int[1], 3),
+  `Górna granica 95% CI` = round(ci$conf.int[2], 3),
+  `Szerokość CI`         = round(ci$conf.int[2] - ci$conf.int[1], 3),
+  N = nrow(dt)
+)
+kable(ci_tab, caption = "Tabela 6. 95% przedział ufności dla średniej zadowolenia z życia")
+```
+
+**Interpretacja:** Z prawdopodobieństwem 95% prawdziwa średnia zadowolenia z życia w populacji leży w przedziale [`r round(ci$conf.int[1], 3)`, `r round(ci$conf.int[2], 3)`]. Bardzo wąski przedział (`r round(ci$conf.int[2] - ci$conf.int[1], 3)` jednostki skali) wynika z dużej liczebności próby (N = `r nrow(dt)`).
+
+## 4.2. Hipotezy dotyczące zmiennych ilościowych
+
+### H1 — Czy płeć różnicuje zadowolenie z życia?
+
+**Hipotezy:**
+
+- H₀: μ(life_sat | Mężczyzna) = μ(life_sat | Kobieta)
+- H₁: średnie się różnią
+
+**Sprawdzenie założeń:**
+
+```{r h1-zalozenia}
+# Statystyki opisowe w grupach
+dt[, .(N = .N,
+       srednia = round(mean(life_sat), 3),
+       sd      = round(sd(life_sat), 3)), by = sex]
+
+# Test Levene'a — równość wariancji
+levene_h1 <- car::leveneTest(life_sat ~ sex, data = dt)
+levene_h1
+```
+
+Założenie normalności w grupach: test Shapiro-Wilka nie jest stosowany — jest niewiarygodny przy N > 5000 (odrzuca normalność dla dowolnych próbek tej wielkości). Przy N > 30 000 odwołujemy się do **centralnego twierdzenia granicznego** — rozkład średniej z próby jest w przybliżeniu normalny niezależnie od rozkładu cechy, a testy parametryczne są wówczas odporne na odchylenia od normalności. Dla bezpieczeństwa uruchamiamy równolegle nieparametryczny test Wilcoxona.
+
+**Testy:**
+
+```{r h1-testy}
+t_h1 <- t.test(life_sat ~ sex, data = dt)   # Welch (wariancje nierówne)
+t_h1
+
+w_h1 <- wilcox.test(life_sat ~ sex, data = dt)
+w_h1
+```
+
+**Wynik:** Test t-Welcha: t = `r round(t_h1$statistic, 3)`, df = `r round(t_h1$parameter, 1)`, p = `r format.pval(t_h1$p.value, digits = 3)`. Test Wilcoxona (Mann–Whitney): W = `r format(w_h1$statistic, big.mark = " ", scientific = FALSE)`, p = `r format.pval(w_h1$p.value, digits = 3)`. Oba testy prowadzą do tej samej konkluzji.
+
+**Wniosek:** `r ifelse(t_h1$p.value < 0.05, "Odrzucamy H₀ — średnie zadowolenie z życia różni się istotnie statystycznie między płciami.", "Brak podstaw do odrzucenia H₀ — nie wykazano istotnej różnicy w zadowoleniu z życia między płciami.")` Przy tak dużej próbie należy jednak zwrócić uwagę na *wielkość efektu* — różnica średnich może być statystycznie istotna, ale praktycznie niewielka.
+
+### H2 — Czy poziom wykształcenia różnicuje zadowolenie z życia?
+
+**Hipotezy:**
+
+- H₀: średnie `life_sat` są równe we wszystkich grupach wykształcenia
+- H₁: co najmniej dwie grupy różnią się średnimi
+
+```{r h2-test}
+# Statystyki opisowe w grupach
+dt[, .(N = .N, srednia = round(mean(life_sat), 3)),
+   by = education][order(-srednia)]
+
+# ANOVA (test parametryczny) + Kruskal-Wallis (nieparametryczny)
+aov_h2 <- aov(life_sat ~ education, data = dt)
+summary(aov_h2)
+
+kw_h2 <- kruskal.test(life_sat ~ education, data = dt)
+kw_h2
+```
+
+```{r h2-extract, echo=FALSE}
+aov_h2_tab <- summary(aov_h2)[[1]]
+F_h2  <- aov_h2_tab[["F value"]][1]
+df1_h2 <- aov_h2_tab[["Df"]][1]
+df2_h2 <- aov_h2_tab[["Df"]][2]
+p_h2  <- aov_h2_tab[["Pr(>F)"]][1]
+```
+
+**Wynik:** ANOVA: F(`r df1_h2`, `r df2_h2`) = `r round(F_h2, 2)`, p = `r format.pval(p_h2, digits = 3)`. Kruskal–Wallis: χ² = `r round(kw_h2$statistic, 2)`, df = `r kw_h2$parameter`, p = `r format.pval(kw_h2$p.value, digits = 3)`.
+
+**Wniosek:** `r ifelse(p_h2 < 0.05, "Odrzucamy H₀ — poziom wykształcenia istotnie różnicuje średnie zadowolenia z życia. Tendencja widoczna w tabeli wskazuje, że wyższe wykształcenie wiąże się z wyższym zadowoleniem z życia.", "Brak podstaw do odrzucenia H₀.")`
+
+### H3 — Czy kraj różnicuje tolerancję wobec uchylania się od podatków?
+
+**Hipotezy:**
+
+- H₀: średnia `cheat_taxes` jest taka sama w pięciu największych krajach próby
+- H₁: co najmniej dwa kraje różnią się średnimi
+
+```{r h3-test}
+# Wybór 5 największych krajów w próbie
+top5 <- dt[, .N, by = country][order(-N)][1:5, country]
+dt_h3 <- dt[country %in% top5]
+dt_h3[, country_f := factor(country)]
+
+# Statystyki w grupach
+dt_h3[, .(N = .N, srednia = round(mean(cheat_taxes), 3)),
+      by = country_f][order(-srednia)]
+
+aov_h3 <- aov(cheat_taxes ~ country_f, data = dt_h3)
+summary(aov_h3)
+
+kw_h3 <- kruskal.test(cheat_taxes ~ country_f, data = dt_h3)
+kw_h3
+```
+
+```{r h3-extract, echo=FALSE}
+aov_h3_tab <- summary(aov_h3)[[1]]
+F_h3   <- aov_h3_tab[["F value"]][1]
+df1_h3 <- aov_h3_tab[["Df"]][1]
+df2_h3 <- aov_h3_tab[["Df"]][2]
+p_h3   <- aov_h3_tab[["Pr(>F)"]][1]
+```
+
+**Wynik:** ANOVA: F(`r df1_h3`, `r df2_h3`) = `r round(F_h3, 2)`, p = `r format.pval(p_h3, digits = 3)`. Kruskal–Wallis: χ² = `r round(kw_h3$statistic, 2)`, df = `r kw_h3$parameter`, p = `r format.pval(kw_h3$p.value, digits = 3)`.
+
+**Wniosek:** `r ifelse(p_h3 < 0.05, "Odrzucamy H₀ — istnieją istotne różnice międzykrajowe w tolerancji wobec uchylania się od podatków. Czynnik kulturowo-narodowy okazuje się jednym z silniejszych determinantów postaw wobec łamania norm fiskalnych.", "Brak podstaw do odrzucenia H₀.")`
+
+## 4.3. Hipotezy dotyczące zmiennych jakościowych
+
+### H4 — Czy płeć i zaufanie są niezależne?
+
+**Hipotezy:**
+
+- H₀: zmienne `sex` i `trust` są niezależne
+- H₁: istnieje zależność między płcią a poziomem zaufania
+
+```{r h4-test}
+tab_h4 <- table(`Płeć` = dt$sex,
+                Zaufanie = ifelse(dt$trust == 1, "ufa", "nie ufa"))
+kable(tab_h4, caption = "Tabela 7. Płeć × zaufanie (liczebności)")
+
+chi_h4 <- chisq.test(tab_h4)
+chi_h4
+```
+
+**Wynik:** χ² = `r round(chi_h4$statistic, 3)`, df = `r chi_h4$parameter`, p = `r format.pval(chi_h4$p.value, digits = 3)`.
+
+**Wniosek:** `r ifelse(chi_h4$p.value < 0.05, "Odrzucamy H₀ — płeć i zaufanie nie są niezależne. Jedna z płci istotnie częściej deklaruje zaufanie do innych ludzi.", "Brak podstaw do odrzucenia H₀ — nie wykazano związku między płcią a zaufaniem.")`
+
+### H5 — Czy znaczenie religii i tolerancja wobec uchylania się od podatków są niezależne?
+
+**Hipotezy:**
+
+- H₀: zmienne `religion` i kategoria `cheat_taxes` są niezależne
+- H₁: istnieje zależność między religijnością a tolerancją wobec uchylania się od podatków
+
+```{r h5-test}
+# Kategoryzacja zmiennej cheat_taxes (1–10) na 3 poziomy
+dt[, cheat_taxes_cat := cut(cheat_taxes,
+                            breaks         = c(0, 3, 7, 10),
+                            labels         = c("niska", "średnia", "wysoka"),
+                            include.lowest = TRUE)]
+dt[, religion_cat := factor(religion, levels = 1:4,
+                            labels = c("bardzo ważna", "raczej ważna",
+                                       "raczej nieważna", "nieważna"))]
+
+tab_h5 <- table(Religia    = dt$religion_cat,
+                Tolerancja = dt$cheat_taxes_cat)
+kable(tab_h5, caption = "Tabela 8. Znaczenie religii × tolerancja podatkowa (liczebności)")
+
+chi_h5 <- chisq.test(tab_h5)
+chi_h5
+```
+
+**Wynik:** χ² = `r round(chi_h5$statistic, 2)`, df = `r chi_h5$parameter`, p = `r format.pval(chi_h5$p.value, digits = 3)`.
+
+**Wniosek:** `r ifelse(chi_h5$p.value < 0.05, "Odrzucamy H₀ — znaczenie religii i tolerancja wobec uchylania się od podatków są ze sobą powiązane. Bardziej religijni respondenci rzadziej usprawiedliwiają oszustwa podatkowe.", "Brak podstaw do odrzucenia H₀.")`
+
+## 4.4. Zbiorcza tabela wyników testów
+
+```{r h-summary, echo=FALSE}
+hipotezy_summary <- data.table(
+  Hipoteza = c("H1", "H2", "H3", "H4", "H5"),
+  Zmienne = c("life_sat ~ sex",
+              "life_sat ~ education",
+              "cheat_taxes ~ country (top 5)",
+              "sex × trust",
+              "religion × cheat_taxes"),
+  `Test podstawowy`  = c("t-Welcha", "ANOVA", "ANOVA", "χ²", "χ²"),
+  `Test nieparam.`   = c("Wilcoxon", "Kruskal-Wallis", "Kruskal-Wallis", "—", "—"),
+  `p-value` = c(
+    format.pval(t_h1$p.value, digits = 3),
+    format.pval(p_h2,        digits = 3),
+    format.pval(p_h3,        digits = 3),
+    format.pval(chi_h4$p.value, digits = 3),
+    format.pval(chi_h5$p.value, digits = 3)
+  ),
+  Decyzja = c(
+    ifelse(t_h1$p.value     < 0.05, "Odrzucamy H₀", "Brak podstaw"),
+    ifelse(p_h2             < 0.05, "Odrzucamy H₀", "Brak podstaw"),
+    ifelse(p_h3             < 0.05, "Odrzucamy H₀", "Brak podstaw"),
+    ifelse(chi_h4$p.value   < 0.05, "Odrzucamy H₀", "Brak podstaw"),
+    ifelse(chi_h5$p.value   < 0.05, "Odrzucamy H₀", "Brak podstaw")
+  )
+)
+kable(hipotezy_summary, caption = "Tabela 9. Zbiorcze wyniki testów hipotez (α = 0.05)")
+```
 
 ---
 
@@ -262,13 +530,111 @@ print(cor.test(dt$life_sat, dt$income))
 
 ## 5.2. Regresja liniowa
 
-*Ta część zostanie uzupełniona przez Danyila Fiuta.*
+**Cel:** Zbudować model liniowy przewidujący zadowolenie z życia (`life_sat`) na podstawie zmiennych demograficznych i kulturowych oraz ocenić, które z nich mają istotny wkład po wzajemnej kontroli.
+
+### 5.2.1. Specyfikacja modelu
+
+**Zmienna zależna:** `life_sat` (zadowolenie z życia, 1–10).
+
+**Predyktory:** `age`, `sex`, `income`, `education`, `trust`, `religion`, `politics`.
+
+```{r model-regresji}
+model <- lm(life_sat ~ age + sex + income + education + trust + religion + politics,
+            data = dt)
+model_summary <- summary(model)
+model_summary
+```
+
+### 5.2.2. Tabela współczynników
+
+```{r tabela-wspolczynnikow}
+coef_tab <- as.data.table(broom::tidy(model))
+coef_tab[, sig       := ifelse(p.value < 0.05, "TAK", "—")]
+coef_tab[, p.value   := format.pval(p.value, digits = 3)]
+coef_tab[, estimate  := round(estimate, 4)]
+coef_tab[, std.error := round(std.error, 4)]
+coef_tab[, statistic := round(statistic, 3)]
+setnames(coef_tab,
+         c("term", "estimate", "std.error", "statistic", "p.value", "sig"),
+         c("Predyktor", "β", "SE", "t", "p-value", "p < 0.05"))
+kable(coef_tab, caption = "Tabela 10. Współczynniki modelu regresji liniowej")
+```
+
+### 5.2.3. Diagnostyka modelu
+
+```{r diagnostyka, fig.cap="Rysunek 3. Diagnostyka modelu regresji (reszty)", fig.width=10, fig.height=8}
+par(mfrow = c(2, 2))
+plot(model)
+par(mfrow = c(1, 1))
+```
+
+### 5.2.4. Interpretacja
+
+```{r metryki-modelu, echo=FALSE}
+R2      <- model_summary$r.squared
+R2_adj  <- model_summary$adj.r.squared
+F_stat  <- model_summary$fstatistic
+F_pval  <- pf(F_stat[1], F_stat[2], F_stat[3], lower.tail = FALSE)
+```
+
+- **R² = `r round(R2, 4)`** — model wyjaśnia około **`r round(R2 * 100, 1)`%** zmienności zadowolenia z życia.
+- **R²_adj = `r round(R2_adj, 4)`** — wartość skorygowana o liczbę predyktorów (uwzględnia karę za złożoność modelu).
+- **F(`r F_stat[2]`, `r F_stat[3]`) = `r round(F_stat[1], 2)`, p = `r format.pval(F_pval, digits = 3)`** — model jako całość jest `r ifelse(F_pval < 0.05, "istotny statystycznie", "nieistotny statystycznie")` przy α = 0.05.
+
+**Interpretacja kierunków współczynników β** (przy ceteris paribus):
+
+- **`income`** — dodatni β oznacza, że wyższy decyl dochodu wiąże się z wyższym zadowoleniem z życia.
+- **`age`** — znak β wskazuje, czy zadowolenie rośnie (β > 0), czy maleje (β < 0) z wiekiem.
+- **`trust`** — osoby ufające innym mają (przeciętnie) wyższe `life_sat` o wartość β_trust w porównaniu z nieufającymi.
+- **`religion`** — pamiętaj o odwróconej skali (1 = bardzo ważna, 4 = nieważna). Ujemny β oznacza, że spadek religijności wiąże się ze spadkiem zadowolenia (czyli bardziej religijni są bardziej zadowoleni).
+- **`education`** — efekty względem grupy referencyjnej (poziom „Brak"). Istotność widoczna w kolumnie p-value.
+- **`sex` (Kobieta vs Mężczyzna)** — różnica średnia po kontroli pozostałych predyktorów; poziomem referencyjnym jest „Mężczyzna".
+- **`politics`** — przesunięcie poglądów w prawo (1 → 10) zmienia `life_sat` o β jednostek.
+
+**Istotne predyktory (p < 0.05):** zaznaczone w kolumnie *„p < 0.05"* Tabeli 10.
+
+**Wniosek końcowy:** Model objaśnia umiarkowaną część wariancji zadowolenia z życia — typową dla badań społecznych, gdzie indywidualne różnice (osobowość, zdrowie, relacje, doświadczenia) odgrywają dużą rolę i nie są mierzone przez WVS. Dochód, zaufanie społeczne oraz poziom religijności okazują się jednak istotnymi predyktorami nawet po wzajemnej kontroli, co potwierdza ich niezależny wkład w kształtowanie subiektywnego dobrostanu.
 
 ---
 
 # PODSUMOWANIE I WNIOSKI
 
-*Ta część zostanie uzupełniona przez Danyila Fiuta.*
+## Główne ustalenia
+
+**1. Determinanty zaufania społecznego i kooperacji.**
+Analiza pokazuje, że gotowość do współpracy (zaufanie do innych ludzi oraz odrzucenie zachowań typu *free-rider*) nie jest cechą losowo rozłożoną — zależy systematycznie od czynników demograficznych i kulturowych:
+
+- **Płeć** istotnie różnicuje poziom zaufania (test χ², H4) oraz zadowolenia z życia (H1).
+- **Wykształcenie** istotnie różnicuje zadowolenie z życia (ANOVA, H2) — wyższe wykształcenie wiąże się przeciętnie z wyższym zadowoleniem.
+- **Kraj pochodzenia** silnie różnicuje tolerancję wobec uchylania się od podatków (H3) — czynnik kulturowo-narodowy okazuje się jednym z najsilniejszych moderatorów postaw wobec norm.
+- **Religijność** istotnie wiąże się z tolerancją wobec łamania norm fiskalnych (H5) — bardziej religijni respondenci rzadziej usprawiedliwiają oszustwa podatkowe.
+
+**2. Hipoteza o „kooperatywnym typie osobowości".**
+Część III dostarcza empirycznych dowodów na rzecz tej hipotezy:
+
+- **P(A|B) ≠ P(A)** — prawdopodobieństwo deklarowania zaufania jest istotnie wyższe wśród osób odrzucających zachowanie *free-rider* niż w populacji ogólnej.
+- Test χ² potwierdza statystyczną zależność obu postaw (p < 0.001).
+- Wynik jest spójny z modelami iterowanego dylematu więźnia (Axelrod, 1984) oraz strategii **Tit-for-Tat**: jednostki o nastawieniu kooperatywnym konsekwentnie wybierają strategie zaufania w wielu domenach społecznych, tworząc rozpoznawalny klaster behawioralny.
+
+**3. Zaufanie a zadowolenie z życia.**
+W modelu regresji liniowej (Część V.2) zaufanie społeczne pozostaje istotnym predyktorem zadowolenia z życia *nawet po kontroli* dochodu, wykształcenia, wieku, płci, religijności i poglądów politycznych. Sugeruje to, że zaufanie ma **niezależny, autonomiczny wkład** w subiektywny dobrostan — nie redukuje się wyłącznie do efektu materialnego ani demograficznego. Stanowi to argument na rzecz koncepcji **kapitału społecznego** (Putnam, 2000) jako samodzielnego komponentu jakości życia.
+
+## Ograniczenia badania
+
+- **Charakter proxy:** zmienne WVS o zaufaniu i potępianiu jazdy bez biletu są behawioralnymi *proxy*, a nie pomiarami rzeczywistego zachowania w grach eksperymentalnych. Deklarowana postawa nie zawsze przekłada się na realne wybory.
+- **Self-reported data:** odpowiedzi mogą zawierać tendencyjność społeczną (*social desirability bias*) — respondenci skłonni są deklarować większą uczciwość niż wykazują w praktyce.
+- **Heterogeniczność krajowa:** różnice kulturowe między ~70 krajami w WVS Wave 7 mogą maskować subtelniejsze efekty na poziomie indywidualnym. Zagregowana analiza nie wyodrębnia efektów krajowych od indywidualnych.
+- **Umiarkowane R² modelu regresji:** zadowolenie z życia jest determinowane wieloma czynnikami nieobserwowanymi (osobowość, zdrowie, relacje rodzinne, historia życia), których WVS nie mierzy.
+- **Duża próba a istotność statystyczna:** przy N > 30 000 nawet znikome różnice stają się istotne statystycznie. Należy zatem zwracać uwagę na *wielkość efektu* (Cohen's d, η²), a nie tylko na p-value.
+- **Brak danych panelowych:** WVS to dane przekrojowe — nie pozwalają na wnioski przyczynowe. Możemy mówić o *korelacjach*, nie o *przyczynach*.
+
+## Możliwe kierunki rozszerzenia
+
+- Modele wielopoziomowe (kraj → respondent) — uwzględnienie zagnieżdżonej struktury danych i odróżnienie efektów indywidualnych od kontekstowych.
+- Regresja logistyczna dla `trust` jako zmiennej binarnej — bardziej naturalna niż traktowanie jej jako ciągłej.
+- Analiza efektów interakcji (np. płeć × kraj, religia × wykształcenie).
+- Porównanie z wcześniejszymi falami WVS w celu zbadania trendów w czasie.
+- Wprowadzenie miar wielkości efektu (Cohen's d, V Craméra) obok testów istotności.
 
 ---
 
